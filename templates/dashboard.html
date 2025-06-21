@@ -99,7 +99,8 @@
                     </div>
                     <div class="p-6">
                         <div id="webcam-feed" class="bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 h-96 flex items-center justify-center">
-                            <div class="text-center">
+                            <img id="video-stream" src="/video_feed" alt="Live Webcam Feed" class="hidden w-full h-full object-cover rounded-lg">
+                            <div id="placeholder" class="text-center">
                                 <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                                 </svg>
@@ -109,7 +110,7 @@
                         </div>
                         
                         <!-- Detection Status -->
-                        <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="mt-4 grid grid-cols-2 md:grid-cols-3 gap-4">
                             <div class="bg-blue-50 rounded-lg p-3">
                                 <div class="text-sm font-medium text-blue-800">Faces Detected</div>
                                 <div id="face-count" class="text-2xl font-bold text-blue-600">0</div>
@@ -121,10 +122,6 @@
                             <div class="bg-yellow-50 rounded-lg p-3">
                                 <div class="text-sm font-medium text-yellow-800">Eye Status</div>
                                 <div id="eye-status" class="text-sm font-semibold text-yellow-600">No face</div>
-                            </div>
-                            <div class="bg-purple-50 rounded-lg p-3">
-                                <div class="text-sm font-medium text-purple-800">Blink Count</div>
-                                <div id="blink-count" class="text-2xl font-bold text-purple-600">0</div>
                             </div>
                         </div>
                     </div>
@@ -244,6 +241,11 @@
                     document.getElementById('stop-btn').disabled = false;
                     document.getElementById('status-indicator').className = 'w-2 h-2 bg-green-500 rounded-full animate-pulse mr-2';
                     document.getElementById('status-text').textContent = 'System Active';
+                    
+                    // Show video stream
+                    document.getElementById('video-stream').classList.remove('hidden');
+                    document.getElementById('placeholder').classList.add('hidden');
+                    
                     startStatusUpdates();
                 } else {
                     alert('Error: ' + data.message);
@@ -263,6 +265,11 @@
                     document.getElementById('stop-btn').disabled = true;
                     document.getElementById('status-indicator').className = 'w-2 h-2 bg-gray-500 rounded-full mr-2';
                     document.getElementById('status-text').textContent = 'System Inactive';
+                    
+                    // Hide video stream and show placeholder
+                    document.getElementById('video-stream').classList.add('hidden');
+                    document.getElementById('placeholder').classList.remove('hidden');
+                    
                     stopStatusUpdates();
                 } else {
                     alert('Error: ' + data.message);
@@ -315,7 +322,6 @@
             document.getElementById('face-count').textContent = data.face_count;
             document.getElementById('head-pose').textContent = data.head_pose;
             document.getElementById('eye-status').textContent = data.eye_status;
-            document.getElementById('blink-count').textContent = data.blink_count;
 
             // Update alerts
             const alertsContainer = document.getElementById('alerts-container');

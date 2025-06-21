@@ -19,11 +19,14 @@ detection_state = {
     'head_pose': 'No face detected',
     'eye_status': 'No face detected',
     'gaze_direction': 'No face detected',
-    'blink_count': 0,
     'detected_objects': [],
     'alerts': [],
     'activity_log': []
 }
+
+# Separate variable for frame storage (not included in JSON responses)
+current_frame = None
+frame_ready = False
 
 # Initialize detection models
 def initialize_models():
@@ -103,7 +106,7 @@ def add_activity_log(event, status='info'):
 
 def detection_thread():
     """Main detection thread"""
-    global detection_state
+    global detection_state, current_frame, frame_ready
     
     # Initialize models
     face_detection, face_mesh, yolo_model = initialize_models()
@@ -120,7 +123,6 @@ def detection_thread():
     # Detection variables
     EAR_THRESHOLD = 0.21
     frame_count = 0
-    blink_count = 0
     eyes_off_screen_start = None
     object_alert_start = None
     OBJECT_DETECTION_INTERVAL = 10
@@ -173,8 +175,8 @@ def detection_thread():
                             if any(obj in class_name.lower() for obj in objects_of_interest):
                                 detected_objects.append({
                                     'name': class_name,
-                                    'confidence': confidence,
-                                    'bbox': (x1, y1, x2, y2)
+                                    'confidence': float(confidence),
+                                    'bbox': [int(x1), int(y1), int(x2), int(y2)]
                                 })
                 
                 detection_state['detected_objects'] = detected_objects
@@ -226,17 +228,15 @@ def detection_thread():
             right_eye_points = np.array([(int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h)) 
                                        for i in right_eye_indices])
             
-            # Blinking detection
+            # Eye status - only show if eyes are open
             left_ear = calculate_ear(left_eye_points)
             right_ear = calculate_ear(right_eye_points)
             avg_ear = (left_ear + right_ear) / 2.0
             
-            if avg_ear < EAR_THRESHOLD:
-                blink_count += 1
-                detection_state['eye_status'] = "Blinking"
-                detection_state['blink_count'] = blink_count
-            else:
+            if avg_ear >= EAR_THRESHOLD:
                 detection_state['eye_status'] = "Eyes Open"
+            else:
+                detection_state['eye_status'] = "Eyes Closed"
             
             # Gaze detection
             left_gaze_x, left_gaze_y = calculate_eye_gaze(left_eye_points, w, h)
@@ -289,11 +289,11 @@ def detection_thread():
                 yaw = np.degrees(np.arctan2(rotation_mat[2, 0], np.sqrt(rotation_mat[2, 1]**2 + rotation_mat[2, 2]**2)))
                 roll = np.degrees(np.arctan2(rotation_mat[1, 0], rotation_mat[0, 0]))
                 
-                # Determine head pose direction
+                # Determine head pose direction (reversed left/right)
                 if yaw < -15:
-                    detection_state['head_pose'] = "Looking Left"
-                elif yaw > 15:
                     detection_state['head_pose'] = "Looking Right"
+                elif yaw > 15:
+                    detection_state['head_pose'] = "Looking Left"
                 elif pitch < -10:
                     detection_state['head_pose'] = "Looking Up"
                 elif pitch > 10:
@@ -331,13 +331,10 @@ def detection_thread():
         cv2.putText(frame, f'Head: {detection_state["head_pose"]}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         cv2.putText(frame, f'Eyes: {detection_state["eye_status"]}', (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame, f'Gaze: {detection_state["gaze_direction"]}', (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        cv2.putText(frame, f'Blinks: {detection_state["blink_count"]}', (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Encode frame for web display
-        ret, buffer = cv2.imencode('.jpg', frame)
-        if ret:
-            frame_bytes = buffer.tobytes()
-            detection_state['current_frame'] = base64.b64encode(frame_bytes).decode('utf-8')
+        # Store frame for web display (using separate variables)
+        current_frame = frame.copy()
+        frame_ready = True
         
         time.sleep(0.033)  # ~30 FPS
     
@@ -347,11 +344,39 @@ def detection_thread():
     face_mesh.close()
     print("Detection thread stopped")
 
+def generate_frames():
+    """Generate video frames for streaming"""
+    global current_frame, frame_ready
+    while True:
+        if frame_ready and current_frame is not None:
+            # Encode frame
+            ret, buffer = cv2.imencode('.jpg', current_frame)
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        else:
+            # Send a placeholder frame when no webcam is active
+            placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(placeholder, 'Webcam not active', (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            ret, buffer = cv2.imencode('.jpg', placeholder)
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.033)  # ~30 FPS
+
 # Flask routes
 @app.route('/')
 def dashboard():
     """Main dashboard page"""
     return render_template('dashboard.html')
+
+@app.route('/video_feed')
+def video_feed():
+    """Video streaming route"""
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/status')
 def get_status():
@@ -379,8 +404,9 @@ def start_detection():
 @app.route('/api/stop')
 def stop_detection():
     """Stop the detection system"""
-    global detection_state
+    global detection_state, frame_ready
     detection_state['is_running'] = False
+    frame_ready = False
     add_activity_log("Monitoring stopped", 'normal')
     return jsonify({'status': 'success', 'message': 'Detection stopped'})
 
