@@ -59,9 +59,18 @@ def initialize_models():
 # Detection functions
 def calculate_ear(eye_points):
     """Calculate the Eye Aspect Ratio (EAR) for blinking detection"""
+    # Vertical distances
     A = np.linalg.norm(eye_points[1] - eye_points[5])
     B = np.linalg.norm(eye_points[2] - eye_points[4])
+    
+    # Horizontal distance
     C = np.linalg.norm(eye_points[0] - eye_points[3])
+    
+    # Avoid division by zero
+    if C == 0:
+        return 0.0
+    
+    # Calculate EAR
     ear = (A + B) / (2.0 * C)
     return ear
 
@@ -228,15 +237,30 @@ def detection_thread():
             right_eye_points = np.array([(int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h)) 
                                        for i in right_eye_indices])
             
+            # Draw eye landmarks for debugging (optional)
+            for point in left_eye_points:
+                cv2.circle(frame, tuple(point), 2, (0, 255, 0), -1)
+            for point in right_eye_points:
+                cv2.circle(frame, tuple(point), 2, (0, 255, 0), -1)
+            
             # Eye status - only show if eyes are open
             left_ear = calculate_ear(left_eye_points)
             right_ear = calculate_ear(right_eye_points)
             avg_ear = (left_ear + right_ear) / 2.0
             
-            if avg_ear >= EAR_THRESHOLD:
+            # More robust EAR thresholds for better eye open/closed detection
+            EAR_THRESHOLD_OPEN = 0.22
+            EAR_THRESHOLD_CLOSED = 0.18
+            
+            # Debug output (uncomment for debugging)
+            # print(f"Left EAR: {left_ear:.3f}, Right EAR: {right_ear:.3f}, Avg EAR: {avg_ear:.3f}")
+            
+            if avg_ear >= EAR_THRESHOLD_OPEN:
                 detection_state['eye_status'] = "Eyes Open"
-            else:
+            elif avg_ear <= EAR_THRESHOLD_CLOSED:
                 detection_state['eye_status'] = "Eyes Closed"
+            else:
+                detection_state['eye_status'] = "Eyes Partially Open"
             
             # Gaze detection
             left_gaze_x, left_gaze_y = calculate_eye_gaze(left_eye_points, w, h)
@@ -331,6 +355,13 @@ def detection_thread():
         cv2.putText(frame, f'Head: {detection_state["head_pose"]}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
         cv2.putText(frame, f'Eyes: {detection_state["eye_status"]}', (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame, f'Gaze: {detection_state["gaze_direction"]}', (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Add EAR value for debugging (only when face is detected)
+        if mesh_results.multi_face_landmarks and len(mesh_results.multi_face_landmarks) == 1:
+            left_ear = calculate_ear(left_eye_points)
+            right_ear = calculate_ear(right_eye_points)
+            avg_ear = (left_ear + right_ear) / 2.0
+            cv2.putText(frame, f'EAR: {avg_ear:.3f}', (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # Store frame for web display (using separate variables)
         current_frame = frame.copy()
